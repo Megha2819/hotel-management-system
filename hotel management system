@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hotel Booking</title>
+    <link rel="stylesheet" href="styles.css">
+<style>
+body {
+    font-family: Arial, sans-serif;
+    text-align: center;
+}
+input, button {
+    margin: 10px;
+    padding: 10px;
+}
+</style>
+</head>
+<body>
+    <h1>Welcome to Our Hotel</h1>
+    <form id="loginForm">
+        <input type="email" id="email" placeholder="Email" required>
+        <input type="password" id="password" placeholder="Password" required>
+        <button type="submit">Login</button>
+    </form>
+
+    <div id="bookingSection" style="display: none;">
+        <h2>Book a Room</h2>
+        <input type="number" id="roomNumber" placeholder="Room Number" required>
+        <input type="date" id="checkIn" required>
+        <input type="date" id="checkOut" required>
+        <button onclick="bookRoom()">Book</button>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    
+    const email = document.getElementById("email").value;
+    const password = document.getElementById("password").value;
+    
+    const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+    });
+    
+    const data = await res.json();
+    if (data.token) {
+        localStorage.setItem("token", data.token);
+        document.getElementById("bookingSection").style.display = "block";
+    } else {
+        alert("Login failed!");
+    }
+});
+
+async function bookRoom() {
+    const roomNumber = document.getElementById("roomNumber").value;
+    const checkInDate = document.getElementById("checkIn").value;
+    const checkOutDate = document.getElementById("checkOut").value;
+
+    const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${localStorage.getItem("token")}`
+        },
+        body: JSON.stringify({ roomNumber, checkInDate, checkOutDate }),
+    });
+
+    const data = await res.json();
+    alert(data.message);
+}
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const path = require("path");
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public"))); // Serve static files
+
+// MongoDB Connection
+mongoose.connect("mongodb://127.0.0.1:27017/hotel_management", {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+}).then(() => console.log("MongoDB Connected"))
+  .catch((err) => console.error("Database connection error:", err));
+
+// User Model
+const UserSchema = new mongoose.Schema({
+    name: String,
+    email: { type: String, unique: true },
+    password: String,
+    role: { type: String, enum: ["guest", "admin"], default: "guest" },
+});
+const User = mongoose.model("User", UserSchema);
+
+// Booking Model
+const BookingSchema = new mongoose.Schema({
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    roomNumber: Number,
+    checkInDate: Date,
+    checkOutDate: Date,
+    status: { type: String, enum: ["pending", "confirmed", "cancelled"], default: "pending" },
+});
+const Booking = mongoose.model("Booking", BookingSchema);
+
+// User Registration
+app.post("/api/auth/register", async (req, res) => {
+    const { name, email, password } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    try {
+        const user = new User({ name, email, password: hashedPassword });
+        await user.save();
+        res.status(201).json({ message: "User registered successfully" });
+    } catch (error) {
+        res.status(400).json({ error: "Email already exists" });
+    }
+});
+
+// User Login
+app.post("/api/auth/login", async (req, res) => {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).json({ error: "Invalid credentials" });
+    }
+    const token = jwt.sign({ id: user._id, role: user.role }, "secretkey", { expiresIn: "1h" });
+    res.json({ token, user });
+});
+
+// Create Booking
+app.post("/api/bookings", async (req, res) => {
+    const { user, roomNumber, checkInDate, checkOutDate } = req.body;
+    try {
+        const booking = new Booking({ user, roomNumber, checkInDate, checkOutDate });
+        await booking.save();
+        res.status(201).json({ message: "Booking successful", booking });
+    } catch (error) {
+        res.status(400).json({ error: "Booking failed" });
+    }
+});
+
+// Get All Bookings
+app.get("/api/bookings", async (req, res) => {
+    const bookings = await Booking.find().populate("user", "name email");
+    res.json(bookings);
+});
+
+// Serve HTML File
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// Start Server
+app.listen(5000, () => console.log("Server running on port 5000"));
